@@ -1,0 +1,726 @@
+---
+title: |
+  \vspace*{\fill}
+  \fontsize{34}{38}\selectfont \textbf {TB Burden Country Reporting Database}
+author: |
+  \fontsize{24}{28}\selectfont Seif H. Kungulio
+date: |
+  \fontsize{18}{22}\selectfont March 6, 2026
+  \ \vspace*{\fill}
+description: "Building a star schema database for TB burden reporting analysis"
+categories: [R, SQL, PostgreSQL, Database, Reporting]
+tags: [RMarkdown, PostgreSQL, Star Schema, Data Engineering, Reporting]
+output: 
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+    highlight: espresso
+    include:
+      in_header: resources/header.tex
+header-includes:
+  - \usepackage{xcolor}
+  - \definecolor{brand}{HTML}{000000}
+  - \definecolor{subbrand}{HTML}{212121}
+  - \usepackage{titlesec}
+  - \titleformat{\section}{\Large\bfseries\color{brand}}{\thesection}{1em}{}
+  - \titleformat{\subsection}{\large\bfseries\color{subbrand}}{\thesubsection}{0.75em}{}
+  - \usepackage[most]{tcolorbox}
+  - \tcbset{colback=white, colframe=brand, coltitle=white, fonttitle=\bfseries}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \fancyhead[L]{\textcolor{brand}{TB Burden Country Reporting Database}}
+  - \fancyhead[R]{\textcolor{subbrand}{Seif H. Kungulio}}
+  - \fancyfoot[C]{\thepage}
+editor_options:
+  chunk_output_type: console
+---
+
+\pagenumbering{gobble}
+
+\newpage
+\thispagestyle{plain}
+&nbsp;
+
+\newpage
+\pagenumbering{roman}
+\tableofcontents
+
+\newpage
+\pagenumbering{arabic}
+
+# Introduction
+To support reporting and analytical exploration of global tuberculosis burden patterns, I designed a reporting database from the `TB_Burden_Country.csv` file using a star schema structure. The dataset stores annual country-level estimates for prevalence, mortality, incidence, HIV-associated TB burden, and case detection rates. Because the source data is already summarized at the country-year level, a dimensional model is a strong fit for reporting, dashboarding, and trend analysis.
+
+The central design decision in this project is the grain of the fact table: **one row per country per year**. Around that grain, I organize descriptive country attributes in `dim_country`, calendar attributes in `dim_date`, and estimate derivation fields in `dim_methodology`. The resulting `fact_tb_burden` table stores the numerical measures required for KPI reporting and comparative analysis. This design makes it easier to answer questions such as which regions have the highest incidence, which countries improved case detection over time, and how mortality and prevalence evolve across years.
+
+\newpage
+
+# Database Creation
+## Environment Setup
+In this setup chunk, I prepare the R environment for the database build. I suppress unnecessary warnings and messages, set the CRAN mirror, and make sure that all required libraries are installed and loaded before any file or database operations begin.
+
+```{r setup, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+options(dplyr.print_min = Inf, dplyr.print_max = Inf)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+required_pkgs <- c("DBI", "RPostgres", "ini", "readr", "dplyr", "glue")
+
+for (pkg in required_pkgs) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+```
+
+## Database Connection
+Here, I read PostgreSQL credentials from a configuration file and establish a safe database connection using `RPostgres`. I also register that connection for later SQL chunks so that all subsequent database commands run against the same session.
+
+```{r db_connection, warning=FALSE, message=FALSE}
+config <- read.ini("resources/db_config.ini")
+db <- config$postgresql
+
+tryCatch({
+  con <- dbConnect(
+    RPostgres::Postgres(),
+    host = db$host,
+    dbname = db$database,
+    user = db$user,
+    password = db$password,
+    port = as.integer(db$port)
+  )
+}, error = function(e) {
+  stop("Database connection failed: ", e$message)
+})
+
+knitr::opts_chunk$set(connection = con)
+```
+
+## Source File Overview
+Before building the schema, I inspect the uploaded CSV to confirm its structure, verify the number of columns, and ensure the raw headers match the database ingestion design.
+
+```{r inspect_source_file}
+tb_raw_preview <- readr::read_csv("resources/TB_Burden_Country.csv", show_col_types = FALSE, n_max = 5)
+colnames(tb_raw_preview)
+dim(tb_raw_preview)
+```
+
+## Schema Strategy
+The reporting model follows a star schema with the following components:
+
+- `dim_country`: descriptive country and regional attributes
+- `dim_date`: year-based reporting calendar
+- `dim_methodology`: textual estimate derivation methods
+- `fact_tb_burden`: all numeric country-year reporting measures
+
+This design keeps reporting queries simple, supports dashboard filters, and minimizes repeated descriptive text in the fact table.
+
+## Prerequisites
+I create a dedicated schema named `tb_reporting` to keep all tables, views, and supporting objects isolated and well organized inside PostgreSQL.
+
+```{sql create_schema}
+CREATE SCHEMA IF NOT EXISTS tb_reporting;
+SET search_path TO tb_reporting;
+```
+
+## Reset Existing Objects
+This chunk drops existing views and tables so the project can be rerun cleanly without conflicts from earlier versions.
+
+```{sql drop_existing_objects}
+DROP VIEW IF EXISTS tb_reporting.vw_tb_country_year_report;
+DROP VIEW IF EXISTS tb_reporting.vw_tb_region_year_summary;
+
+DROP TABLE IF EXISTS tb_reporting.fact_tb_burden CASCADE;
+DROP TABLE IF EXISTS tb_reporting.dim_methodology CASCADE;
+DROP TABLE IF EXISTS tb_reporting.dim_date CASCADE;
+DROP TABLE IF EXISTS tb_reporting.dim_country CASCADE;
+DROP TABLE IF EXISTS tb_reporting.stg_tb_burden_country_clean CASCADE;
+DROP TABLE IF EXISTS tb_reporting.raw_tb_burden_country CASCADE;
+```
+
+## Raw Landing Table
+I first create a raw landing table that mirrors the exact structure of the CSV file. Every column is initially stored as text so the import is resilient to formatting issues, blank cells, or inconsistent value types.
+
+```{sql create_raw_table}
+CREATE TABLE tb_reporting.raw_tb_burden_country (
+    "Country or territory name" TEXT,
+    "ISO 2-character country/territory code" TEXT,
+    "ISO 3-character country/territory code" TEXT,
+    "ISO numeric country/territory code" TEXT,
+    "Region" TEXT,
+    "Year" TEXT,
+    "Estimated total population number" TEXT,
+    "Estimated prevalence of TB (all forms) per 100 000 population" TEXT,
+    "Estimated prevalence of TB (all forms) per 100 000 population, low bound" TEXT,
+    "Estimated prevalence of TB (all forms) per 100 000 population, high bound" TEXT,
+    "Estimated prevalence of TB (all forms)" TEXT,
+    "Estimated prevalence of TB (all forms), low bound" TEXT,
+    "Estimated prevalence of TB (all forms), high bound" TEXT,
+    "Method to derive prevalence estimates" TEXT,
+    "Estimated mortality of TB cases (all forms, excluding HIV) per 100 000 population" TEXT,
+    "Estimated mortality of TB cases (all forms, excluding HIV), per 100 000 population, low bound" TEXT,
+    "Estimated mortality of TB cases (all forms, excluding HIV), per 100 000 population, high bound" TEXT,
+    "Estimated number of deaths from TB (all forms, excluding HIV)" TEXT,
+    "Estimated number of deaths from TB (all forms, excluding HIV), low bound" TEXT,
+    "Estimated number of deaths from TB (all forms, excluding HIV), high bound" TEXT,
+    "Estimated mortality of TB cases who are HIV-positive, per 100 000 population" TEXT,
+    "Estimated mortality of TB cases who are HIV-positive, per 100 000 population, low bound" TEXT,
+    "Estimated mortality of TB cases who are HIV-positive, per 100 000 population, high bound" TEXT,
+    "Estimated number of deaths from TB in people who are HIV-positive" TEXT,
+    "Estimated number of deaths from TB in people who are HIV-positive, low bound" TEXT,
+    "Estimated number of deaths from TB in people who are HIV-positive, high bound" TEXT,
+    "Method to derive mortality estimates" TEXT,
+    "Estimated incidence (all forms) per 100 000 population" TEXT,
+    "Estimated incidence (all forms) per 100 000 population, low bound" TEXT,
+    "Estimated incidence (all forms) per 100 000 population, high bound" TEXT,
+    "Estimated number of incident cases (all forms)" TEXT,
+    "Estimated number of incident cases (all forms), low bound" TEXT,
+    "Estimated number of incident cases (all forms), high bound" TEXT,
+    "Method to derive incidence estimates" TEXT,
+    "Estimated HIV in incident TB (percent)" TEXT,
+    "Estimated HIV in incident TB (percent), low bound" TEXT,
+    "Estimated HIV in incident TB (percent), high bound" TEXT,
+    "Estimated incidence of TB cases who are HIV-positive per 100 000 population" TEXT,
+    "Estimated incidence of TB cases who are HIV-positive per 100 000 population, low bound" TEXT,
+    "Estimated incidence of TB cases who are HIV-positive per 100 000 population, high bound" TEXT,
+    "Estimated incidence of TB cases who are HIV-positive" TEXT,
+    "Estimated incidence of TB cases who are HIV-positive, low bound" TEXT,
+    "Estimated incidence of TB cases who are HIV-positive, high bound" TEXT,
+    "Method to derive TBHIV estimates" TEXT,
+    "Case detection rate (all forms), percent" TEXT,
+    "Case detection rate (all forms), percent, low bound" TEXT,
+    "Case detection rate (all forms), percent, high bound" TEXT
+);
+```
+
+## Load the CSV
+I use an R chunk to load the uploaded CSV file into PostgreSQL. This approach is portable across environments and avoids relying on server-side `COPY` permissions.
+
+```{r load_raw_csv_to_postgres}
+tb_raw <- readr::read_csv("TB_Burden_Country.csv", show_col_types = FALSE)
+
+dbWriteTable(
+  con,
+  name = DBI::Id(schema = "tb_reporting", table = "raw_tb_burden_country"),
+  value = tb_raw,
+  append = TRUE,
+  row.names = FALSE
+)
+```
+
+## Cleaned Staging Table
+Next, I build a cleaned staging table that renames the verbose raw headers into SQL-friendly field names, trims whitespace, converts empty strings to `NULL`, and casts values to their proper numeric and date-compatible data types.
+
+```{sql create_clean_stage}
+CREATE TABLE tb_reporting.stg_tb_burden_country_clean AS
+SELECT
+    NULLIF(TRIM("Country or territory name"), '') AS country_name,
+    NULLIF(TRIM("ISO 2-character country/territory code"), '') AS iso2_code,
+    NULLIF(TRIM("ISO 3-character country/territory code"), '') AS iso3_code,
+    NULLIF(TRIM("ISO numeric country/territory code"), '')::INT AS iso_numeric_code,
+    NULLIF(TRIM("Region"), '') AS region,
+    NULLIF(TRIM("Year"), '')::INT AS year,
+    NULLIF(TRIM("Estimated total population number"), '')::BIGINT AS estimated_total_population,
+
+    NULLIF(TRIM("Estimated prevalence of TB (all forms) per 100 000 population"), '')::NUMERIC(18,2) AS prevalence_per_100k,
+    NULLIF(TRIM("Estimated prevalence of TB (all forms) per 100 000 population, low bound"), '')::NUMERIC(18,2) AS prevalence_per_100k_low,
+    NULLIF(TRIM("Estimated prevalence of TB (all forms) per 100 000 population, high bound"), '')::NUMERIC(18,2) AS prevalence_per_100k_high,
+    NULLIF(TRIM("Estimated prevalence of TB (all forms)"), '')::NUMERIC(18,2) AS prevalence_total,
+    NULLIF(TRIM("Estimated prevalence of TB (all forms), low bound"), '')::NUMERIC(18,2) AS prevalence_total_low,
+    NULLIF(TRIM("Estimated prevalence of TB (all forms), high bound"), '')::NUMERIC(18,2) AS prevalence_total_high,
+    NULLIF(TRIM("Method to derive prevalence estimates"), '') AS prevalence_method,
+
+    NULLIF(TRIM("Estimated mortality of TB cases (all forms, excluding HIV) per 100 000 population"), '')::NUMERIC(18,2) AS mortality_excl_hiv_per_100k,
+    NULLIF(TRIM("Estimated mortality of TB cases (all forms, excluding HIV), per 100 000 population, low bound"), '')::NUMERIC(18,2) AS mortality_excl_hiv_per_100k_low,
+    NULLIF(TRIM("Estimated mortality of TB cases (all forms, excluding HIV), per 100 000 population, high bound"), '')::NUMERIC(18,2) AS mortality_excl_hiv_per_100k_high,
+    NULLIF(TRIM("Estimated number of deaths from TB (all forms, excluding HIV)"), '')::NUMERIC(18,2) AS deaths_excl_hiv,
+    NULLIF(TRIM("Estimated number of deaths from TB (all forms, excluding HIV), low bound"), '')::NUMERIC(18,2) AS deaths_excl_hiv_low,
+    NULLIF(TRIM("Estimated number of deaths from TB (all forms, excluding HIV), high bound"), '')::NUMERIC(18,2) AS deaths_excl_hiv_high,
+
+    NULLIF(TRIM("Estimated mortality of TB cases who are HIV-positive, per 100 000 population"), '')::NUMERIC(18,2) AS mortality_hiv_pos_per_100k,
+    NULLIF(TRIM("Estimated mortality of TB cases who are HIV-positive, per 100 000 population, low bound"), '')::NUMERIC(18,2) AS mortality_hiv_pos_per_100k_low,
+    NULLIF(TRIM("Estimated mortality of TB cases who are HIV-positive, per 100 000 population, high bound"), '')::NUMERIC(18,2) AS mortality_hiv_pos_per_100k_high,
+    NULLIF(TRIM("Estimated number of deaths from TB in people who are HIV-positive"), '')::NUMERIC(18,2) AS deaths_hiv_pos,
+    NULLIF(TRIM("Estimated number of deaths from TB in people who are HIV-positive, low bound"), '')::NUMERIC(18,2) AS deaths_hiv_pos_low,
+    NULLIF(TRIM("Estimated number of deaths from TB in people who are HIV-positive, high bound"), '')::NUMERIC(18,2) AS deaths_hiv_pos_high,
+    NULLIF(TRIM("Method to derive mortality estimates"), '') AS mortality_method,
+
+    NULLIF(TRIM("Estimated incidence (all forms) per 100 000 population"), '')::NUMERIC(18,2) AS incidence_per_100k,
+    NULLIF(TRIM("Estimated incidence (all forms) per 100 000 population, low bound"), '')::NUMERIC(18,2) AS incidence_per_100k_low,
+    NULLIF(TRIM("Estimated incidence (all forms) per 100 000 population, high bound"), '')::NUMERIC(18,2) AS incidence_per_100k_high,
+    NULLIF(TRIM("Estimated number of incident cases (all forms)"), '')::NUMERIC(18,2) AS incident_cases,
+    NULLIF(TRIM("Estimated number of incident cases (all forms), low bound"), '')::NUMERIC(18,2) AS incident_cases_low,
+    NULLIF(TRIM("Estimated number of incident cases (all forms), high bound"), '')::NUMERIC(18,2) AS incident_cases_high,
+    NULLIF(TRIM("Method to derive incidence estimates"), '') AS incidence_method,
+
+    NULLIF(TRIM("Estimated HIV in incident TB (percent)"), '')::NUMERIC(18,2) AS hiv_in_incident_tb_percent,
+    NULLIF(TRIM("Estimated HIV in incident TB (percent), low bound"), '')::NUMERIC(18,2) AS hiv_in_incident_tb_percent_low,
+    NULLIF(TRIM("Estimated HIV in incident TB (percent), high bound"), '')::NUMERIC(18,2) AS hiv_in_incident_tb_percent_high,
+
+    NULLIF(TRIM("Estimated incidence of TB cases who are HIV-positive per 100 000 population"), '')::NUMERIC(18,2) AS incidence_hiv_pos_per_100k,
+    NULLIF(TRIM("Estimated incidence of TB cases who are HIV-positive per 100 000 population, low bound"), '')::NUMERIC(18,2) AS incidence_hiv_pos_per_100k_low,
+    NULLIF(TRIM("Estimated incidence of TB cases who are HIV-positive per 100 000 population, high bound"), '')::NUMERIC(18,2) AS incidence_hiv_pos_per_100k_high,
+    NULLIF(TRIM("Estimated incidence of TB cases who are HIV-positive"), '')::NUMERIC(18,2) AS incidence_hiv_pos,
+    NULLIF(TRIM("Estimated incidence of TB cases who are HIV-positive, low bound"), '')::NUMERIC(18,2) AS incidence_hiv_pos_low,
+    NULLIF(TRIM("Estimated incidence of TB cases who are HIV-positive, high bound"), '')::NUMERIC(18,2) AS incidence_hiv_pos_high,
+    NULLIF(TRIM("Method to derive TBHIV estimates"), '') AS tbhiv_method,
+
+    NULLIF(TRIM("Case detection rate (all forms), percent"), '')::NUMERIC(18,2) AS case_detection_rate_percent,
+    NULLIF(TRIM("Case detection rate (all forms), percent, low bound"), '')::NUMERIC(18,2) AS case_detection_rate_percent_low,
+    NULLIF(TRIM("Case detection rate (all forms), percent, high bound"), '')::NUMERIC(18,2) AS case_detection_rate_percent_high
+FROM tb_reporting.raw_tb_burden_country;
+```
+
+## Data Quality Checks
+I validate the business grain and overall completeness of the staging layer before creating the dimensional model.
+
+```{sql quality_checks}
+-- Row count in stage
+SELECT COUNT(*) AS stage_row_count
+FROM tb_reporting.stg_tb_burden_country_clean;
+
+-- Duplicate business grain check
+SELECT country_name, year, COUNT(*) AS duplicate_count
+FROM tb_reporting.stg_tb_burden_country_clean
+GROUP BY country_name, year
+HAVING COUNT(*) > 1;
+
+-- Missing required grain fields
+SELECT *
+FROM tb_reporting.stg_tb_burden_country_clean
+WHERE country_name IS NULL OR year IS NULL;
+```
+
+## Dimension Tables
+### Country dimension
+I create `dim_country` to store country and region descriptors that would otherwise repeat across many rows. This dimension supports filtering by country, ISO code, and world region.
+
+```{sql dim_country}
+CREATE TABLE tb_reporting.dim_country (
+    country_key BIGSERIAL PRIMARY KEY,
+    country_name VARCHAR(150) NOT NULL,
+    iso2_code VARCHAR(2),
+    iso3_code VARCHAR(3),
+    iso_numeric_code INT,
+    region VARCHAR(100),
+    CONSTRAINT uq_dim_country UNIQUE (country_name, iso3_code)
+);
+```
+
+### Date dimension
+The `dim_date` table stores the reporting year and its decade grouping. Since the dataset is annual, the year itself serves as a natural reporting key.
+
+```{sql dim_date}
+CREATE TABLE tb_reporting.dim_date (
+    date_key INT PRIMARY KEY,
+    year INT NOT NULL,
+    decade INT NOT NULL,
+    year_label VARCHAR(10) NOT NULL,
+    CONSTRAINT uq_dim_date UNIQUE (year)
+);
+```
+
+### Methodology dimension
+I create `dim_methodology` to hold estimate derivation methods for prevalence, mortality, incidence, and TB-HIV calculations. This avoids repeating the same text strings across the fact table and makes methodology-based filtering easier.
+
+```{sql dim_methodology}
+CREATE TABLE tb_reporting.dim_methodology (
+    methodology_key BIGSERIAL PRIMARY KEY,
+    prevalence_method VARCHAR(255),
+    mortality_method VARCHAR(255),
+    incidence_method VARCHAR(255),
+    tbhiv_method VARCHAR(255),
+    CONSTRAINT uq_dim_methodology UNIQUE (
+        prevalence_method,
+        mortality_method,
+        incidence_method,
+        tbhiv_method
+    )
+);
+```
+
+## Fact Table
+The fact table stores all numeric reporting measures at the **country-year** grain. It references the country, date, and methodology dimensions and acts as the main table for analytical reporting.
+
+```{sql fact_tb_burden}
+CREATE TABLE tb_reporting.fact_tb_burden (
+    tb_burden_key BIGSERIAL PRIMARY KEY,
+    country_key BIGINT NOT NULL,
+    date_key INT NOT NULL,
+    methodology_key BIGINT,
+
+    estimated_total_population BIGINT,
+
+    prevalence_per_100k NUMERIC(18,2),
+    prevalence_per_100k_low NUMERIC(18,2),
+    prevalence_per_100k_high NUMERIC(18,2),
+    prevalence_total NUMERIC(18,2),
+    prevalence_total_low NUMERIC(18,2),
+    prevalence_total_high NUMERIC(18,2),
+
+    mortality_excl_hiv_per_100k NUMERIC(18,2),
+    mortality_excl_hiv_per_100k_low NUMERIC(18,2),
+    mortality_excl_hiv_per_100k_high NUMERIC(18,2),
+    deaths_excl_hiv NUMERIC(18,2),
+    deaths_excl_hiv_low NUMERIC(18,2),
+    deaths_excl_hiv_high NUMERIC(18,2),
+
+    mortality_hiv_pos_per_100k NUMERIC(18,2),
+    mortality_hiv_pos_per_100k_low NUMERIC(18,2),
+    mortality_hiv_pos_per_100k_high NUMERIC(18,2),
+    deaths_hiv_pos NUMERIC(18,2),
+    deaths_hiv_pos_low NUMERIC(18,2),
+    deaths_hiv_pos_high NUMERIC(18,2),
+
+    incidence_per_100k NUMERIC(18,2),
+    incidence_per_100k_low NUMERIC(18,2),
+    incidence_per_100k_high NUMERIC(18,2),
+    incident_cases NUMERIC(18,2),
+    incident_cases_low NUMERIC(18,2),
+    incident_cases_high NUMERIC(18,2),
+
+    hiv_in_incident_tb_percent NUMERIC(18,2),
+    hiv_in_incident_tb_percent_low NUMERIC(18,2),
+    hiv_in_incident_tb_percent_high NUMERIC(18,2),
+
+    incidence_hiv_pos_per_100k NUMERIC(18,2),
+    incidence_hiv_pos_per_100k_low NUMERIC(18,2),
+    incidence_hiv_pos_per_100k_high NUMERIC(18,2),
+    incidence_hiv_pos NUMERIC(18,2),
+    incidence_hiv_pos_low NUMERIC(18,2),
+    incidence_hiv_pos_high NUMERIC(18,2),
+
+    case_detection_rate_percent NUMERIC(18,2),
+    case_detection_rate_percent_low NUMERIC(18,2),
+    case_detection_rate_percent_high NUMERIC(18,2),
+
+    CONSTRAINT fk_fact_tb_country
+        FOREIGN KEY (country_key) REFERENCES tb_reporting.dim_country(country_key),
+    CONSTRAINT fk_fact_tb_date
+        FOREIGN KEY (date_key) REFERENCES tb_reporting.dim_date(date_key),
+    CONSTRAINT fk_fact_tb_methodology
+        FOREIGN KEY (methodology_key) REFERENCES tb_reporting.dim_methodology(methodology_key),
+    CONSTRAINT uq_fact_tb_burden UNIQUE (country_key, date_key)
+);
+```
+
+## Load Dimensions
+I populate each dimension from the cleaned staging table using distinct records only. This ensures the model remains normalized and avoids unnecessary duplicates.
+
+```{sql load_dimensions}
+INSERT INTO tb_reporting.dim_country (
+    country_name,
+    iso2_code,
+    iso3_code,
+    iso_numeric_code,
+    region
+)
+SELECT DISTINCT
+    country_name,
+    iso2_code,
+    iso3_code,
+    iso_numeric_code,
+    region
+FROM tb_reporting.stg_tb_burden_country_clean
+WHERE country_name IS NOT NULL
+ORDER BY country_name;
+
+INSERT INTO tb_reporting.dim_date (
+    date_key,
+    year,
+    decade,
+    year_label
+)
+SELECT DISTINCT
+    year AS date_key,
+    year,
+    (year / 10) * 10 AS decade,
+    year::VARCHAR(10) AS year_label
+FROM tb_reporting.stg_tb_burden_country_clean
+WHERE year IS NOT NULL
+ORDER BY year;
+
+INSERT INTO tb_reporting.dim_methodology (
+    prevalence_method,
+    mortality_method,
+    incidence_method,
+    tbhiv_method
+)
+SELECT DISTINCT
+    prevalence_method,
+    mortality_method,
+    incidence_method,
+    tbhiv_method
+FROM tb_reporting.stg_tb_burden_country_clean
+ORDER BY 1,2,3,4;
+```
+
+## Load Fact Table
+This chunk resolves surrogate keys from the dimensions and inserts all numerical measures into the central fact table.
+
+```{sql load_fact_table}
+INSERT INTO tb_reporting.fact_tb_burden (
+    country_key,
+    date_key,
+    methodology_key,
+    estimated_total_population,
+    prevalence_per_100k,
+    prevalence_per_100k_low,
+    prevalence_per_100k_high,
+    prevalence_total,
+    prevalence_total_low,
+    prevalence_total_high,
+    mortality_excl_hiv_per_100k,
+    mortality_excl_hiv_per_100k_low,
+    mortality_excl_hiv_per_100k_high,
+    deaths_excl_hiv,
+    deaths_excl_hiv_low,
+    deaths_excl_hiv_high,
+    mortality_hiv_pos_per_100k,
+    mortality_hiv_pos_per_100k_low,
+    mortality_hiv_pos_per_100k_high,
+    deaths_hiv_pos,
+    deaths_hiv_pos_low,
+    deaths_hiv_pos_high,
+    incidence_per_100k,
+    incidence_per_100k_low,
+    incidence_per_100k_high,
+    incident_cases,
+    incident_cases_low,
+    incident_cases_high,
+    hiv_in_incident_tb_percent,
+    hiv_in_incident_tb_percent_low,
+    hiv_in_incident_tb_percent_high,
+    incidence_hiv_pos_per_100k,
+    incidence_hiv_pos_per_100k_low,
+    incidence_hiv_pos_per_100k_high,
+    incidence_hiv_pos,
+    incidence_hiv_pos_low,
+    incidence_hiv_pos_high,
+    case_detection_rate_percent,
+    case_detection_rate_percent_low,
+    case_detection_rate_percent_high
+)
+SELECT
+    c.country_key,
+    d.date_key,
+    m.methodology_key,
+    s.estimated_total_population,
+    s.prevalence_per_100k,
+    s.prevalence_per_100k_low,
+    s.prevalence_per_100k_high,
+    s.prevalence_total,
+    s.prevalence_total_low,
+    s.prevalence_total_high,
+    s.mortality_excl_hiv_per_100k,
+    s.mortality_excl_hiv_per_100k_low,
+    s.mortality_excl_hiv_per_100k_high,
+    s.deaths_excl_hiv,
+    s.deaths_excl_hiv_low,
+    s.deaths_excl_hiv_high,
+    s.mortality_hiv_pos_per_100k,
+    s.mortality_hiv_pos_per_100k_low,
+    s.mortality_hiv_pos_per_100k_high,
+    s.deaths_hiv_pos,
+    s.deaths_hiv_pos_low,
+    s.deaths_hiv_pos_high,
+    s.incidence_per_100k,
+    s.incidence_per_100k_low,
+    s.incidence_per_100k_high,
+    s.incident_cases,
+    s.incident_cases_low,
+    s.incident_cases_high,
+    s.hiv_in_incident_tb_percent,
+    s.hiv_in_incident_tb_percent_low,
+    s.hiv_in_incident_tb_percent_high,
+    s.incidence_hiv_pos_per_100k,
+    s.incidence_hiv_pos_per_100k_low,
+    s.incidence_hiv_pos_per_100k_high,
+    s.incidence_hiv_pos,
+    s.incidence_hiv_pos_low,
+    s.incidence_hiv_pos_high,
+    s.case_detection_rate_percent,
+    s.case_detection_rate_percent_low,
+    s.case_detection_rate_percent_high
+FROM tb_reporting.stg_tb_burden_country_clean s
+JOIN tb_reporting.dim_country c
+    ON s.country_name = c.country_name
+   AND COALESCE(s.iso3_code, '') = COALESCE(c.iso3_code, '')
+JOIN tb_reporting.dim_date d
+    ON s.year = d.year
+JOIN tb_reporting.dim_methodology m
+    ON COALESCE(s.prevalence_method, '') = COALESCE(m.prevalence_method, '')
+   AND COALESCE(s.mortality_method, '') = COALESCE(m.mortality_method, '')
+   AND COALESCE(s.incidence_method, '') = COALESCE(m.incidence_method, '')
+   AND COALESCE(s.tbhiv_method, '') = COALESCE(m.tbhiv_method, '');
+```
+
+## Performance Indexes
+I add indexes on frequently joined and filtered columns so that reporting queries and dashboard refreshes run more efficiently.
+
+```{sql create_indexes}
+CREATE INDEX idx_dim_country_name ON tb_reporting.dim_country(country_name);
+CREATE INDEX idx_dim_country_region ON tb_reporting.dim_country(region);
+CREATE INDEX idx_dim_country_iso3 ON tb_reporting.dim_country(iso3_code);
+
+CREATE INDEX idx_fact_tb_country_key ON tb_reporting.fact_tb_burden(country_key);
+CREATE INDEX idx_fact_tb_date_key ON tb_reporting.fact_tb_burden(date_key);
+CREATE INDEX idx_fact_tb_methodology_key ON tb_reporting.fact_tb_burden(methodology_key);
+CREATE INDEX idx_fact_tb_country_date ON tb_reporting.fact_tb_burden(country_key, date_key);
+```
+
+## Reporting Views
+To simplify downstream reporting, I create two reusable views: one detailed country-year reporting view and one aggregated region-year summary view.
+
+```{sql reporting_views}
+CREATE VIEW tb_reporting.vw_tb_country_year_report AS
+SELECT
+    f.tb_burden_key,
+    d.year,
+    d.decade,
+    c.country_name,
+    c.iso2_code,
+    c.iso3_code,
+    c.iso_numeric_code,
+    c.region,
+    m.prevalence_method,
+    m.mortality_method,
+    m.incidence_method,
+    m.tbhiv_method,
+    f.estimated_total_population,
+    f.prevalence_per_100k,
+    f.prevalence_per_100k_low,
+    f.prevalence_per_100k_high,
+    f.prevalence_total,
+    f.prevalence_total_low,
+    f.prevalence_total_high,
+    f.mortality_excl_hiv_per_100k,
+    f.mortality_excl_hiv_per_100k_low,
+    f.mortality_excl_hiv_per_100k_high,
+    f.deaths_excl_hiv,
+    f.deaths_excl_hiv_low,
+    f.deaths_excl_hiv_high,
+    f.mortality_hiv_pos_per_100k,
+    f.mortality_hiv_pos_per_100k_low,
+    f.mortality_hiv_pos_per_100k_high,
+    f.deaths_hiv_pos,
+    f.deaths_hiv_pos_low,
+    f.deaths_hiv_pos_high,
+    f.incidence_per_100k,
+    f.incidence_per_100k_low,
+    f.incidence_per_100k_high,
+    f.incident_cases,
+    f.incident_cases_low,
+    f.incident_cases_high,
+    f.hiv_in_incident_tb_percent,
+    f.hiv_in_incident_tb_percent_low,
+    f.hiv_in_incident_tb_percent_high,
+    f.incidence_hiv_pos_per_100k,
+    f.incidence_hiv_pos_per_100k_low,
+    f.incidence_hiv_pos_per_100k_high,
+    f.incidence_hiv_pos,
+    f.incidence_hiv_pos_low,
+    f.incidence_hiv_pos_high,
+    f.case_detection_rate_percent,
+    f.case_detection_rate_percent_low,
+    f.case_detection_rate_percent_high
+FROM tb_reporting.fact_tb_burden f
+JOIN tb_reporting.dim_country c
+    ON f.country_key = c.country_key
+JOIN tb_reporting.dim_date d
+    ON f.date_key = d.date_key
+LEFT JOIN tb_reporting.dim_methodology m
+    ON f.methodology_key = m.methodology_key;
+
+CREATE VIEW tb_reporting.vw_tb_region_year_summary AS
+SELECT
+    d.year,
+    c.region,
+    COUNT(*) AS country_rows,
+    SUM(f.estimated_total_population) AS total_population,
+    AVG(f.prevalence_per_100k) AS avg_prevalence_per_100k,
+    AVG(f.mortality_excl_hiv_per_100k) AS avg_mortality_excl_hiv_per_100k,
+    AVG(f.incidence_per_100k) AS avg_incidence_per_100k,
+    AVG(f.case_detection_rate_percent) AS avg_case_detection_rate_percent,
+    SUM(f.incident_cases) AS total_incident_cases,
+    SUM(f.deaths_excl_hiv) AS total_deaths_excl_hiv,
+    SUM(f.deaths_hiv_pos) AS total_deaths_hiv_pos
+FROM tb_reporting.fact_tb_burden f
+JOIN tb_reporting.dim_country c
+    ON f.country_key = c.country_key
+JOIN tb_reporting.dim_date d
+    ON f.date_key = d.date_key
+GROUP BY d.year, c.region;
+```
+
+## Validation Queries
+These checks confirm that the raw, staging, dimension, and fact layers have loaded correctly and that the business grain remains unique.
+
+```{sql validation_queries}
+SELECT COUNT(*) AS raw_count
+FROM tb_reporting.raw_tb_burden_country;
+
+SELECT COUNT(*) AS stage_count
+FROM tb_reporting.stg_tb_burden_country_clean;
+
+SELECT COUNT(*) AS fact_count
+FROM tb_reporting.fact_tb_burden;
+
+SELECT COUNT(*) AS country_count
+FROM tb_reporting.dim_country;
+
+SELECT COUNT(*) AS year_count
+FROM tb_reporting.dim_date;
+
+SELECT country_key, date_key, COUNT(*) AS duplicate_count
+FROM tb_reporting.fact_tb_burden
+GROUP BY country_key, date_key
+HAVING COUNT(*) > 1;
+```
+
+## Sample Reporting Queries
+Finally, I include a few analytical queries that can be used directly in reporting or dashboard prototypes.
+
+```{sql sample_query_country_trend}
+SELECT
+    c.country_name,
+    d.year,
+    f.incidence_per_100k,
+    f.case_detection_rate_percent,
+    f.deaths_excl_hiv
+FROM tb_reporting.fact_tb_burden f
+JOIN tb_reporting.dim_country c ON f.country_key = c.country_key
+JOIN tb_reporting.dim_date d ON f.date_key = d.date_key
+WHERE c.country_name = 'India'
+ORDER BY d.year;
+```
+
+```{sql sample_query_top_countries}
+SELECT
+    d.year,
+    c.country_name,
+    c.region,
+    f.incident_cases,
+    f.deaths_excl_hiv
+FROM tb_reporting.fact_tb_burden f
+JOIN tb_reporting.dim_country c ON f.country_key = c.country_key
+JOIN tb_reporting.dim_date d ON f.date_key = d.date_key
+WHERE d.year = 2013
+ORDER BY f.incident_cases DESC NULLS LAST
+LIMIT 10;
+```
+
+```{sql sample_query_region_summary}
+SELECT *
+FROM tb_reporting.vw_tb_region_year_summary
+ORDER BY year, region;
+```
+
+# Conclusion
+This RMarkdown workflow transforms the raw TB burden CSV into a structured PostgreSQL star schema designed for reporting analysis. By separating descriptive dimensions from numeric facts and preserving a clean country-year grain, the model becomes easier to query, easier to connect to BI tools, and easier to maintain over time. It also creates a repeatable database build process that supports both technical documentation and production-style reporting workflows.
+
+```{r disconnect, include=FALSE}
+DBI::dbDisconnect(con)
+```
