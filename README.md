@@ -140,11 +140,11 @@ Several validation checks ensure data reliability.
 
 ### Row Count Reconciliation
 
-  Table           Row Count
-  --------------- -----------
-  Raw dataset     5,120
-  Staging layer   5,120
-  Fact table      5,120
+  | Table         | Row Count |
+  |---------------| ----------|
+  | Raw dataset   | 5,120 |
+  | Staging layer | 5,120 |
+  | Fact table    | 5,120 |
 
 No records were lost during transformation.
 
