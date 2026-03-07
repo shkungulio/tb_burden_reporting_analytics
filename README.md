@@ -1,3 +1,5 @@
+[![Project Cover](resources/cover.png)](tb_burden_reporting.pdf)
+
 # TB Burden Reporting Analytics
 
 **Author:** Seif H. Kungulio\
