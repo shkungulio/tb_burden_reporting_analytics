@@ -71,7 +71,7 @@ ingestion to ensure schema compatibility and data integrity.
 
 ------------------------------------------------------------------------
 
-# Architecture
+## Architecture
 
 The analytical warehouse follows a star schema design, enabling
 efficient reporting queries and simplified joins.
@@ -82,12 +82,12 @@ efficient reporting queries and simplified joins.
 
 ------------------------------------------------------------------------
 
-# Data Engineering Pipeline
+## Data Engineering Pipeline
 
 The project implements a multi-layer data pipeline commonly used in
 enterprise analytics environments.
 
-## 1. Raw Ingestion Layer
+### 1. Raw Ingestion Layer
 
 Raw CSV data is loaded directly into PostgreSQL without modification.
 
@@ -102,7 +102,7 @@ tb_reporting.raw_tb_burden_country
 
 ------------------------------------------------------------------------
 
-## 2. Cleaned Staging Layer
+### 2. Cleaned Staging Layer
 
 Data is standardized and validated.
 
@@ -120,7 +120,7 @@ tb_reporting.stg_tb_burden_country_clean
 
 ------------------------------------------------------------------------
 
-## 3. Dimensional Warehouse Layer
+### 3. Dimensional Warehouse Layer
 
 Cleaned data is transformed into a star schema:
 
@@ -134,11 +134,11 @@ dashboards.
 
 ------------------------------------------------------------------------
 
-# Data Quality & Validation
+## Data Quality & Validation
 
 Several validation checks ensure data reliability.
 
-## Row Count Reconciliation
+### Row Count Reconciliation
 
   Table           Row Count
   --------------- -----------
@@ -150,7 +150,7 @@ No records were lost during transformation.
 
 ------------------------------------------------------------------------
 
-## Grain Integrity
+### Grain Integrity
 
 The dataset was validated to ensure:
 
@@ -160,7 +160,7 @@ Duplicate checks confirmed no duplicate country-year records.
 
 ------------------------------------------------------------------------
 
-# Performance Optimization
+## Performance Optimization
 
 Indexes were created on frequently queried columns to improve query
 performance.
@@ -178,11 +178,11 @@ in reporting dashboards.
 
 ------------------------------------------------------------------------
 
-# Reporting Views
+## Reporting Views
 
 Two analytical views simplify reporting queries.
 
-## Country-Year Reporting View
+### Country-Year Reporting View
 
 vw_tb_country_year_report
 
@@ -191,7 +191,7 @@ it easier for BI tools and analysts to access reporting metrics.
 
 ------------------------------------------------------------------------
 
-## Regional Summary View
+### Regional Summary View
 
 vw_tb_region_year_summary
 
@@ -206,9 +206,9 @@ This structure supports high-level monitoring dashboards.
 
 ------------------------------------------------------------------------
 
-# Example Analytical Queries
+## Example Analytical Queries
 
-## Country Trend Analysis
+### Country Trend Analysis
 
 The reporting model enables longitudinal analysis of TB metrics for a
 country across time.
@@ -221,7 +221,7 @@ Example: India TB trends from 1990--2013 including:
 
 ------------------------------------------------------------------------
 
-## Top Countries by TB Incidence
+### Top Countries by TB Incidence
 
 Example ranking query identifies countries with the highest TB burden.
 
@@ -235,33 +235,33 @@ Top countries in 2013:
 
 ------------------------------------------------------------------------
 
-# Key Skills Demonstrated
+## Key Skills Demonstrated
 
 This project demonstrates competencies required in Reporting Analyst,
 Data Analyst, and Analytics Engineer roles.
 
-## Data Engineering
+### Data Engineering
 
 -   ETL pipeline development
 -   Raw → staging → warehouse architecture
 -   SQL data transformations
 -   PostgreSQL schema design
 
-## Data Modeling
+### Data Modeling
 
 -   Dimensional modeling
 -   Star schema design
 -   Fact and dimension tables
 -   Analytical grain enforcement
 
-## Data Quality
+### Data Quality
 
 -   Validation checks
 -   Duplicate detection
 -   Missing value auditing
 -   Row reconciliation
 
-## Reporting Analytics
+### Reporting Analytics
 
 -   Analytical SQL queries
 -   Aggregation and ranking analysis
@@ -270,7 +270,7 @@ Data Analyst, and Analytics Engineer roles.
 
 ------------------------------------------------------------------------
 
-# Tools & Technologies
+## Tools & Technologies
 
   | Category              | Tools |
   |-----------------------| ----------------|
