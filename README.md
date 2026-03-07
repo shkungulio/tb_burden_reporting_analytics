@@ -272,14 +272,14 @@ Data Analyst, and Analytics Engineer roles.
 
 # Tools & Technologies
 
-  Category                Tools
-  ----------------------- ----------------
-  Database                PostgreSQL
-  Language                SQL
-  Analytics Environment   R
-  Integration             DBI, RPostgres
-  Data Processing         dplyr
-  Documentation           RMarkdown
+  | Category              | Tools |
+  |-----------------------| ----------------|
+  | Database              | PostgreSQL |
+  | Language              | SQL |
+  | Analytics Environment | R |
+  | Integration           | DBI, RPostgres |
+  | Data Processing       | dplyr |
+  | Documentation         | RMarkdown |
 
 ------------------------------------------------------------------------
 
