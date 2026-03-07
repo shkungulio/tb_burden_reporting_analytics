@@ -79,9 +79,6 @@ efficient reporting queries and simplified joins.
 ## Star Schema Structure
 ![ERD_Diagram](resources/diagram.png)
 
-dim_country ---- fact_tb_burden ---- dim_date\
-                     \|\
-                 dim_methodology
 
 ------------------------------------------------------------------------
 
