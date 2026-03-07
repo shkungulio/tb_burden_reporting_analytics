@@ -810,7 +810,7 @@ LIMIT 10;
 ```{sql sample_query_region_summary}
 SELECT *
 FROM tb_reporting.vw_tb_region_year_summary
-ORDER BY year, region;
+ORDER BY year DESC, region;
 ```
 
 # Conclusion
