@@ -76,7 +76,7 @@ ingestion to ensure schema compatibility and data integrity.
 The analytical warehouse follows a star schema design, enabling
 efficient reporting queries and simplified joins.
 
-## Star Schema Structure
+### Star Schema Structure
 ![ERD_Diagram](resources/diagram.png)
 
 
