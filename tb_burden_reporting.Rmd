@@ -49,9 +49,13 @@ editor_options:
 \pagenumbering{arabic}
 
 # Introduction
-To support reporting and analytical exploration of global tuberculosis burden patterns, I designed a reporting database from the `TB_Burden_Country.csv` file using a star schema structure. The dataset stores annual country-level estimates for prevalence, mortality, incidence, HIV-associated TB burden, and case detection rates. Because the source data is already summarized at the country-year level, a dimensional model is a strong fit for reporting, dashboarding, and trend analysis.
+Modern public health analysis depends heavily on the ability to transform complex datasets into structured, reliable reporting systems that support data-driven decision-making. This project demonstrates how global tuberculosis (TB) burden data can be transformed into a scalable analytical environment by designing a structured reporting database using PostgreSQL and a dimensional modeling approach. The source dataset contains country-level annual estimates for TB prevalence, incidence, mortality, HIV-associated TB burden, and case detection rates across multiple regions and years. These metrics provide valuable insight into how TB affects populations globally and how disease patterns evolve over time. 
 
-The central design decision in this project is the grain of the fact table: **one row per country per year**. Around that grain, I organize descriptive country attributes in `dim_country`, calendar attributes in `dim_date`, and estimate derivation fields in `dim_methodology`. The resulting `fact_tb_burden` table stores the numerical measures required for KPI reporting and comparative analysis. This design makes it easier to answer questions such as which regions have the highest incidence, which countries improved case detection over time, and how mortality and prevalence evolve across years.
+To support efficient reporting and analytical exploration, the project implements a star schema data model built around a clearly defined analytical grain of one record per country per year. This structure organizes descriptive geographic information, time attributes, and estimation methodologies into dedicated dimension tables, while quantitative disease indicators are stored within a centralized fact table. By separating descriptive attributes from measurable indicators, the design reduces redundancy, simplifies query logic, and enables efficient aggregation of health metrics across countries, regions, and time periods. 
+
+The workflow also demonstrates several professional data engineering practices commonly used in reporting and analytics environments. These include building a reproducible pipeline in RMarkdown, establishing secure database connectivity, creating a raw ingestion layer to preserve source data, implementing a cleaned staging layer for transformation and validation, and loading the final data into a dimensional warehouse structure. Data quality checks are incorporated throughout the process to verify row consistency, confirm the integrity of the reporting grain, and ensure that key attributes such as country identifiers and reporting years are complete before the analytical model is built.
+
+The resulting reporting model supports a wide range of analytical use cases. Analysts can explore country-level TB trends over time, compare disease burden across regions, evaluate case detection performance, and identify countries with the highest incidence rates. Because the dataset is structured as a star schema, it can be easily connected to business intelligence platforms or dashboard tools to enable interactive reporting and public health monitoring. Overall, the project demonstrates how raw epidemiological data can be transformed into a maintainable and performance-optimized analytical system designed for reporting, trend analysis, and strategic decision support.
 
 \newpage
 
@@ -74,10 +78,10 @@ for (pkg in required_pkgs) {
   library(pkg, character.only = TRUE)
 }
 ```
+The workflow begins by establishing a reproducible R environment configured with the required libraries for database connectivity, configuration management, data ingestion, and transformation. Preparing the execution environment at the outset ensures that the entire analytics pipeline can run consistently across systems without dependency conflicts. This approach reflects strong reproducibility practices and demonstrates familiarity with professional analytics workflows where projects must be portable and maintainable.
 
 ## Database Connection
 The database connection chunk establishes communication between R and the PostgreSQL database used for the reporting project. Credentials are read from an external configuration file rather than being embedded directly in the code, which represents a safer and more professional approach to handling sensitive connection details. Once the connection is created, it becomes the active session through which all SQL commands are executed throughout the workflow. This step demonstrates the integration of analytical tools with relational database systems, a common requirement in modern reporting and analytics environments.
-
 ```{r db_connection, warning=FALSE, message=FALSE}
 config <- read.ini("resources/db_config.ini")
 db <- config$postgresql
@@ -97,15 +101,16 @@ tryCatch({
 
 knitr::opts_chunk$set(connection = con)
 ```
+A secure connection to the PostgreSQL database is established using parameters stored in an external configuration file rather than hard-coded credentials. By separating connection details from the codebase, the project follows secure development practices and supports deployment across different environments. Once connected, R is able to send SQL commands directly to the database, enabling seamless integration between the analytical scripting environment and the relational database system.
 
 ## Source File Overview
 The source inspection chunk performs an initial exploration of the incoming TB burden dataset before it is ingested into the database. By previewing several rows of the file and listing the column structure, the code verifies that the dataset matches expectations and that the column headers are being interpreted correctly. This inspection step helps identify structural issues such as unexpected fields, formatting problems, or inconsistencies in the dataset. Conducting this check before ingestion reflects responsible data validation practices and helps ensure that downstream transformations are built on a reliable data foundation.
-
 ```{r inspect_source_file}
 tb_raw_preview <- readr::read_csv("resources/TB_Burden_Country.csv", show_col_types = FALSE, n_max = 5)
 colnames(tb_raw_preview)
 dim(tb_raw_preview)
 ```
+The TB burden dataset is initially inspected to confirm that the file structure aligns with expectations before ingestion begins. A preview of the dataset reveals a table containing forty-seven columns and several rows of data, allowing the analyst to verify column names, formatting, and general structure. Conducting this early validation reduces the likelihood of downstream failures and demonstrates a careful, quality-oriented approach to data ingestion.
 
 ## Schema Strategy
 The reporting model follows a star schema with the following components:
@@ -115,18 +120,17 @@ The reporting model follows a star schema with the following components:
 - `dim_methodology`: textual estimate derivation methods
 - `fact_tb_burden`: all numeric country-year reporting measures
 
-This design keeps reporting queries simple, supports dashboard filters, and minimizes repeated descriptive text in the fact table.
+A dimensional modeling strategy is defined in order to organize the dataset into a reporting-friendly structure. The design introduces a star schema composed of three descriptive dimensions—country, date, and methodology—alongside a central fact table that stores the measurable TB burden metrics. Structuring the data in this manner supports efficient reporting, simplifies joins for analysts, and prepares the dataset for use in dashboards and business intelligence tools.
 
 ## Prerequisites
 The schema creation chunk creates a dedicated PostgreSQL schema designed specifically for the TB reporting data model. Organizing the project within its own schema improves clarity, prevents naming conflicts with other database objects, and allows all tables, views, and supporting structures related to the reporting pipeline to be grouped together logically. Structuring a database environment in this way mirrors practices commonly used in enterprise data warehouses, where analytical assets are separated from transactional data to maintain governance and maintainability.
-
 ```{sql create_schema}
 CREATE SCHEMA IF NOT EXISTS tb_reporting;
 ```
+A dedicated schema named `tb_reporting` is created within PostgreSQL to store all tables and views associated with the project. Isolating reporting objects within their own schema improves maintainability, prevents naming conflicts, and mirrors common enterprise data warehouse practices. The environment therefore becomes organized and easier to manage as additional reporting assets are added.
 
 ## Reset Existing Objects
 The object reset chunk removes any previously created tables and views associated with the reporting model. This step ensures that the workflow can be executed repeatedly without conflicts caused by existing database objects. By clearing old objects before rebuilding them, the pipeline becomes fully reproducible and suitable for iterative development or testing. This design demonstrates an understanding of maintainable data engineering workflows, where pipelines must often be rerun as data evolves or improvements are introduced.
-
 ```{sql}
 DROP VIEW IF EXISTS tb_reporting.vw_tb_country_year_report;
 ```
@@ -158,10 +162,10 @@ DROP TABLE IF EXISTS tb_reporting.stg_tb_burden_country_clean CASCADE;
 ```{sql}
 DROP TABLE IF EXISTS tb_reporting.raw_tb_burden_country CASCADE;
 ```
+Existing tables and views related to the reporting model are removed prior to rebuilding the database structures. Resetting these objects ensures that the pipeline can be executed repeatedly without conflicts from previous runs. Maintaining a clean rebuild process demonstrates a production-style mindset where analytical pipelines must be reliable and rerunnable during iterative development.
 
 ## Load the CSV
 The raw data loading chunk ingests the TB burden CSV dataset into PostgreSQL as a raw landing table. During this process, the column names from the source file are converted into standardized SQL-friendly identifiers to simplify downstream transformations and queries. Creating a raw ingestion layer allows the original data to be preserved while still enabling analytical transformations to occur in later stages of the pipeline. This design mirrors modern data engineering architectures that separate raw ingestion from cleaned and modeled data layers.
-
 ```{r load_raw_csv_to_postgres}
 tb_raw <- readr::read_csv("resources/TB_Burden_Country.csv", show_col_types = FALSE)
 
@@ -223,10 +227,10 @@ DBI::dbWriteTable(
   row.names = FALSE
 )
 ```
+The TB burden CSV file is loaded into PostgreSQL as a raw landing table. All fields are initially stored as text to preserve the source data exactly as received. Maintaining a raw layer protects the integrity of the original dataset and provides a stable reference point for auditing or troubleshooting later stages of the transformation process.
 
 ## Cleaned Staging Table
 The staging table transformation chunk converts the raw dataset into a structured and analysis-ready format. In this step, whitespace is removed, blank strings are converted to null values, and textual fields are cast into their correct data types such as integers or numeric measures. These transformations ensure that quantitative indicators such as TB prevalence, incidence, and mortality can be reliably aggregated and analyzed. By standardizing data types and cleaning inconsistent values, this step establishes a trusted staging layer that supports the dimensional model built later in the pipeline.
-
 ```{sql create_clean_stage}
 CREATE TABLE tb_reporting.stg_tb_burden_country_clean AS
 SELECT
@@ -327,15 +331,19 @@ SELECT
     AS case_detection_rate_percent_high
 FROM tb_reporting.raw_tb_burden_country;
 ```
+A cleaned staging table is generated from the raw dataset to standardize and prepare the data for analytical use. During this process, whitespace is trimmed, empty strings are converted to null values, and appropriate numeric data types are assigned to measurement fields such as prevalence, incidence, mortality, and case detection rates. Creating a staging layer ensures that the downstream data model relies on consistent and validated data rather than raw text inputs.
 
 ## Data Quality Checks
+### Row Count Validation
 The row count validation chunk checks whether the number of records in the cleaned staging table matches the number of records loaded into the raw ingestion table. This reconciliation step confirms that no rows were unintentionally lost during the transformation process. Maintaining identical row counts between ingestion and staging layers is an important quality assurance practice because it verifies that the cleaning logic preserved the full dataset. This type of validation is commonly used in production reporting pipelines to ensure that transformations do not introduce data loss.
 ```{sql row_count_checks}
 -- Row count in stage
 SELECT COUNT(*) AS stage_row_count
 FROM tb_reporting.stg_tb_burden_country_clean;
 ```
+A reconciliation check confirms that the staging table contains the same number of records as the raw dataset. Both tables report a total of **5,120** rows, indicating that no records were lost during transformation. Performing this validation step reinforces the reliability of the pipeline and demonstrates disciplined data quality verification.
 
+### Duplicate Detection
 The duplicate detection chunk verifies that the dataset conforms to the intended reporting grain of one record per country per year. By searching for duplicate combinations of country and year in the staging table, the code confirms that the dataset supports a dimensional fact table structure without violating its grain. Ensuring grain integrity is critical in analytical modeling because duplicates would distort aggregated metrics and produce misleading reporting results.
 ```{sql duplicate_checks}
 -- Duplicate business grain check
@@ -344,7 +352,9 @@ FROM tb_reporting.stg_tb_burden_country_clean
 GROUP BY country_name, year
 HAVING COUNT(*) > 1;
 ```
+An additional validation step examines whether any duplicate records exist at the intended reporting grain of one row per country per year. The query returns **zero** duplicate records, confirming that the dataset maintains the expected granularity and that no unintended duplication occurred during cleaning.
 
+### Missing Value Validation
 The missing value validation chunk checks whether any records are missing the key fields that define the dataset’s reporting grain, specifically the country identifier or the reporting year. Because these fields are essential for joining dimension tables and maintaining fact table uniqueness, their absence would compromise the integrity of the reporting model. This validation step demonstrates awareness of the importance of key attributes in dimensional modeling and helps guarantee that the dataset is structurally complete before loading it into the analytical schema.
 ```{sql missing_checks}
 -- Missing required grain fields
@@ -352,6 +362,7 @@ SELECT *
 FROM tb_reporting.stg_tb_burden_country_clean
 WHERE country_name IS NULL OR year IS NULL;
 ```
+Data quality checks confirm that all records contain values for the critical grain-defining attributes: country name and reporting year. The absence of missing values in these fields ensures that each record can be accurately linked to its respective dimensions in the reporting model.
 
 ## Dimension Tables
 ### Country dimension
@@ -367,6 +378,7 @@ CREATE TABLE tb_reporting.dim_country (
     CONSTRAINT uq_dim_country UNIQUE (country_name, iso3_code)
 );
 ```
+A dedicated country dimension table is constructed to store geographic attributes such as country name, ISO codes, and world region. Separating descriptive information from measurable metrics reduces redundancy and allows the same country attributes to be reused across multiple analytical queries.
 
 ### Date dimension
 The date dimension creation chunk constructs a time dimension aligned with the dataset’s annual reporting structure. Although the dataset records only yearly observations, the dimension enriches the time context by including attributes such as the reporting year and decade grouping. This allows analysts to perform time-based aggregations and trend analysis more easily. Incorporating a date dimension reflects standard data warehouse design practices and prepares the dataset for dashboard visualizations and longitudinal analysis.
@@ -379,6 +391,7 @@ CREATE TABLE tb_reporting.dim_date (
     CONSTRAINT uq_dim_date UNIQUE (year)
 );
 ```
+A time dimension table is introduced to support temporal analysis. Each row represents a reporting year and includes derived attributes such as the decade and formatted year labels. Even though the source dataset is annual, adding these derived attributes expands analytical flexibility for trend analysis and aggregated time comparisons.
 
 ### Methodology dimension
 The methodology dimension creation chunk extracts textual descriptors that explain how TB burden metrics were estimated. Rather than repeating these explanatory strings for every record in the fact table, the methodology descriptions are normalized into their own dimension. This approach improves efficiency and makes it possible to analyze results by methodological approach if needed. It also provides transparency for analysts and stakeholders who want to understand the estimation methods behind the reported indicators.
@@ -397,6 +410,7 @@ CREATE TABLE tb_reporting.dim_methodology (
     )
 );
 ```
+Methodology descriptions associated with prevalence, incidence, mortality, and TB-HIV estimation methods are normalized into a separate dimension. Storing these textual descriptors in their own table prevents repeated storage within the fact table and improves interpretability of the metrics.
 
 ## Fact Table
 The fact table creation chunk defines the central analytical table that stores all quantitative TB burden measures. This table contains the numeric indicators for prevalence, incidence, mortality, and related measures while linking to the country, date, and methodology dimensions through foreign keys. The design enforces the reporting grain of one row per country per year and provides the foundation for all downstream analytical queries and dashboards. In dimensional modeling, the fact table serves as the primary structure from which aggregated metrics and insights are derived.
@@ -464,8 +478,10 @@ CREATE TABLE tb_reporting.fact_tb_burden (
     CONSTRAINT uq_fact_tb_burden UNIQUE (country_key, date_key)
 );
 ```
+The central fact table is created to store all numerical TB burden indicators. Foreign keys reference the country, date, and methodology dimensions, forming the core star schema structure. Constraints enforce uniqueness for each country-year combination, ensuring that the analytical grain of the dataset remains consistent.
 
 ## Load Dimensions
+### Country dimension
 The country dimension loading chunk populates the country lookup table using distinct country attributes extracted from the staging dataset. By inserting only unique combinations of country names, codes, and regions, the process ensures that each country appears once in the dimension table. This loading step creates a clean reference structure that supports geographic filtering and hierarchical reporting across regions and countries.
 ```{sql load_dim_country}
 INSERT INTO tb_reporting.dim_country (
@@ -485,7 +501,9 @@ FROM tb_reporting.stg_tb_burden_country_clean
 WHERE country_name IS NOT NULL
 ORDER BY country_name;
 ```
+Distinct country records are extracted from the staging table and inserted into the country dimension. The resulting table provides a standardized lookup structure for geographic reporting and supports filtering or grouping of metrics by country or region.
 
+### Date dimension
 The date dimension loading chunk inserts distinct reporting years into the date dimension while also deriving additional attributes such as decade groupings. Even though the dataset operates at an annual level, enriching the time dimension in this way supports broader trend analysis and simplifies reporting logic in dashboards or analytical queries. This step finalizes the time dimension used throughout the reporting model.
 ```{sql load_dim_date}
 INSERT INTO tb_reporting.dim_date (
@@ -503,7 +521,9 @@ FROM tb_reporting.stg_tb_burden_country_clean
 WHERE year IS NOT NULL
 ORDER BY year;
 ```
+Distinct reporting years are loaded into the date dimension along with their derived decade attributes. This time reference enables consistent temporal joins and facilitates year-over-year or decade-level reporting.
 
+### Methodology dimension
 The methodology dimension loading chunk inserts unique combinations of methodological descriptors from the staging dataset into the methodology dimension table. This process removes duplicate text entries and ensures that each distinct methodological approach is stored only once. The resulting dimension allows analytical queries to reference methodology categories through compact foreign keys rather than repeated text values.
 ```{sql load_dim_methodology}
 INSERT INTO tb_reporting.dim_methodology (
@@ -520,6 +540,7 @@ SELECT DISTINCT
 FROM tb_reporting.stg_tb_burden_country_clean
 ORDER BY 1,2,3,4;
 ```
+Unique combinations of methodology descriptors are inserted into the methodology dimension. By eliminating duplicate descriptions, the table remains compact while still capturing the methodological context associated with each measurement.
 
 ## Load Fact Table
 The fact table loading chunk performs the core dimensional integration step by joining the cleaned staging table with each dimension table to resolve surrogate keys. Once the keys are resolved, the code inserts all numeric TB burden measures into the fact table along with references to their corresponding country, date, and methodology records. This process transforms the cleaned staging data into a fully structured star schema that supports efficient analytical reporting.
@@ -619,6 +640,7 @@ JOIN tb_reporting.dim_methodology m
    AND COALESCE(s.incidence_method, '') = COALESCE(m.incidence_method, '')
    AND COALESCE(s.tbhiv_method, '') = COALESCE(m.tbhiv_method, '');
 ```
+The cleaned staging dataset is joined to the dimension tables in order to populate the fact table. Surrogate keys are resolved for each dimension, and all numeric TB burden metrics are inserted into the central fact structure. At this stage, the project transitions from a cleaned dataset into a fully operational dimensional warehouse model.
 
 ## Performance Indexes
 The indexing chunk adds database indexes to key columns used in joins and filters across the fact and dimension tables. Indexes improve query performance by allowing the database engine to locate records more efficiently during reporting operations. Creating indexes on commonly queried attributes such as country, region, and year ensures that analytical queries and dashboards can retrieve results quickly even as the dataset grows in size.
@@ -649,8 +671,10 @@ CREATE INDEX idx_fact_tb_methodology_key ON tb_reporting.fact_tb_burden(methodol
 ```{sql}
 CREATE INDEX idx_fact_tb_country_date ON tb_reporting.fact_tb_burden(country_key, date_key);
 ```
+Indexes are created on frequently queried columns such as country identifiers, regional attributes, and foreign keys within the fact table. These indexes improve query execution speed and ensure that the model performs efficiently when accessed by reporting tools or analytical queries.
 
 ## Reporting Views
+### Country-Year Reporting View
 The detailed reporting view creation chunk builds a user-friendly view that joins the fact table with its related dimension tables. This view presents a flattened dataset containing both descriptive attributes and analytical measures, making it easier for analysts or business intelligence tools to query the data without manually writing complex joins. By exposing a clean reporting layer, the project improves accessibility for downstream users.
 ```{sql}
 CREATE VIEW tb_reporting.vw_tb_country_year_report AS
@@ -712,7 +736,9 @@ JOIN tb_reporting.dim_date d
 LEFT JOIN tb_reporting.dim_methodology m
     ON f.methodology_key = m.methodology_key;
 ```
+A reporting view is created that joins the fact table with all associated dimensions to produce a flattened dataset suitable for analysis and visualization. The view simplifies access for analysts and business intelligence platforms by removing the need to repeatedly construct complex joins.
 
+### Regional Summary View
 The regional summary view creation chunk produces an aggregated reporting structure that summarizes TB burden metrics by region and year. Instead of requiring users to calculate totals and averages manually, the view provides precomputed metrics that can be used directly in dashboards or reports. This design supports high-level monitoring of regional trends and simplifies performance comparisons across geographic areas.
 ```{sql}
 CREATE VIEW tb_reporting.vw_tb_region_year_summary AS
@@ -735,8 +761,10 @@ JOIN tb_reporting.dim_date d
     ON f.date_key = d.date_key
 GROUP BY d.year, c.region;
 ```
+An aggregated reporting view summarizes TB burden metrics at the region-year level. This structure provides precomputed totals and averages, enabling quick access to high-level indicators frequently used in dashboards and strategic reporting.
 
 ## Validation Queries
+### Row Count Reconciliation
 The validation query chunk performs final reconciliation checks across the raw, staging, and fact tables. By confirming that row counts match and that dimension tables contain the expected number of records, the pipeline verifies that the entire transformation process completed successfully. This final validation step provides confidence that the reporting model accurately reflects the original dataset.
 ```{sql}
 SELECT COUNT(*) AS raw_count
@@ -762,7 +790,9 @@ FROM tb_reporting.dim_country;
 SELECT COUNT(*) AS year_count
 FROM tb_reporting.dim_date;
 ```
+End-to-end validation confirms that the entire pipeline loaded successfully. The database reports **5,120** rows in the raw dataset, **5,120** rows in the staging layer, and **5,120** rows in the fact table, indicating full reconciliation across all stages. Dimension tables contain **219** countries and **24** reporting years, which aligns with the expected structure of the global dataset.
 
+### Fact Table Integrity Check
 The fact table integrity check searches for duplicate records at the fact table grain after the dimensional loading process. Because the fact table is designed to contain exactly one record per country per year, the presence of duplicates would indicate a problem in the loading logic. This check confirms that the fact table maintains its intended grain and that analytical results derived from it will remain accurate.
 ```{sql}
 SELECT country_key, date_key, COUNT(*) AS duplicate_count
@@ -770,10 +800,10 @@ FROM tb_reporting.fact_tb_burden
 GROUP BY country_key, date_key
 HAVING COUNT(*) > 1;
 ```
+A final integrity check confirms that the fact table contains **no duplicate** combinations of country and year. Maintaining this strict grain ensures that aggregated metrics and trend analyses remain accurate.
 
 ## Sample Reporting Queries
-Finally, I include a few analytical queries that can be used directly in reporting or dashboard prototypes.
-
+### Country Trend Analysis
 The country trend analysis query demonstrates how the reporting model can be used to analyze TB burden trends for a specific country over time. By retrieving indicators such as incidence, case detection rate, and deaths for each year, the query illustrates the analytical value of the star schema. This example highlights how the model supports time-series analysis and country-level monitoring.
 ```{sql sample_query_country_trend}
 SELECT
@@ -788,7 +818,9 @@ JOIN tb_reporting.dim_date d ON f.date_key = d.date_key
 WHERE c.country_name = 'India'
 ORDER BY d.year;
 ```
+Example analytical queries demonstrate the usability of the model by retrieving annual TB metrics for India. The results illustrate year-over-year values for incidence rates, case detection percentages, and mortality counts, confirming that the database supports longitudinal country-level analysis.
 
+### Top Countries Analysis
 The top countries query ranks countries by the number of incident TB cases in a selected year. This type of analysis helps identify the regions and countries with the highest disease burden and is useful for comparative reporting and prioritization. Demonstrating this query shows how the data model can support ranking and benchmarking analyses.
 ```{sql sample_query_top_countries}
 SELECT
@@ -804,7 +836,9 @@ WHERE d.year = 2013
 ORDER BY f.incident_cases DESC NULLS LAST
 LIMIT 10;
 ```
+Ranking queries identify the countries with the highest number of TB incident cases in a given year. Results show India leading with approximately **2.1 million cases**, followed by China and Nigeria. Such comparisons highlight the ability of the reporting model to support prioritization and benchmarking.
 
+### Regional Summary Analysis
 The regional totals query retrieves aggregate TB burden metrics across regions and years. By summarizing population, incident cases, and deaths, this query supports high-level reporting used by policymakers and public health analysts. The results are suitable for dashboards that monitor regional trends over time.
 ```{sql sample_query_region_summary_totals}
 SELECT 
@@ -817,7 +851,9 @@ SELECT
 FROM tb_reporting.vw_tb_region_year_summary
 ORDER BY year DESC, region;
 ```
+Aggregated queries summarize total population, incident cases, and deaths by world region. The results indicate particularly high case counts within the Southeast Asia and Africa regions, demonstrating how the model enables large-scale epidemiological comparisons.
 
+### Regional Averages Analysis
 The regional averages query calculates average prevalence, mortality, and incidence values by region and year. This analysis allows comparisons across geographic regions and supports evaluation of how disease burden evolves over time. Providing this query demonstrates the flexibility of the reporting model in supporting multiple types of analytical perspectives.
 ```{sql sample_query_region_summary_averages}
 SELECT 
@@ -829,9 +865,20 @@ SELECT
 FROM tb_reporting.vw_tb_region_year_summary
 ORDER BY year, region;
 ```
+Additional queries compute regional averages for prevalence, incidence, and mortality per 100,000 population. These normalized metrics provide a balanced basis for comparing TB burden across geographic regions over time.
+
+\newpage
 
 # Conclusion
-This RMarkdown workflow transforms the raw TB burden CSV into a structured PostgreSQL star schema designed for reporting analysis. By separating descriptive dimensions from numeric facts and preserving a clean country-year grain, the model becomes easier to query, easier to connect to BI tools, and easier to maintain over time. It also creates a repeatable database build process that supports both technical documentation and production-style reporting workflows.
+This project demonstrates the complete transformation of a complex global health dataset into a structured reporting database designed for analytical exploration and business intelligence reporting. Beginning with a raw CSV dataset containing country-level TB burden metrics, the workflow systematically builds a production-style data pipeline that ingests, validates, cleans, and organizes the data into a PostgreSQL star schema. The resulting model preserves the analytical grain of one record per country per year, ensuring that reporting results remain accurate and consistent across aggregations and trend analyses.
+
+The dimensional model separates descriptive attributes from quantitative measures through dedicated country, date, and methodology dimensions, while the fact table stores all numeric disease indicators required for analytical reporting. This structure reduces redundancy, simplifies query design, and enables efficient aggregation of epidemiological metrics across geographic regions and time periods. By implementing indexes on frequently queried attributes and constructing reporting views that flatten dimensional joins, the database also improves query performance and accessibility for downstream analytical tools.
+
+Data integrity and reliability were emphasized throughout the pipeline. Validation queries confirmed that row counts remained consistent across raw, staging, and fact layers, demonstrating that transformations preserved the full dataset. Additional integrity checks verified that the dimensional grain remained intact and that no duplicate country-year records were introduced during loading. These validation steps reflect common practices used in enterprise data pipelines where maintaining data accuracy and traceability is critical.
+
+The final reporting layer supports a variety of analytical queries, including country-level trend analysis, ranking countries by disease burden, and regional aggregation of incidence and mortality indicators. These capabilities illustrate how the dimensional model enables meaningful comparisons across countries and regions while supporting longitudinal analysis over multiple decades. Such insights can help policymakers, analysts, and researchers better understand patterns in global TB burden and identify areas where public health interventions may be most needed.
+
+Beyond its epidemiological context, the project also serves as a practical demonstration of modern reporting data analytics skills. It highlights the ability to design dimensional data models, implement reproducible analytical pipelines, integrate scripting environments with relational databases, and prepare structured datasets for reporting and visualization. These competencies are essential in many analytics and reporting roles where transforming raw data into reliable, decision-ready information is a core responsibility.
 
 ```{r disconnect, include=FALSE}
 # The final chunk closes the PostgreSQL database connection used throughout the workflow. Ending the connection ensures that system resources are released and that the session terminates cleanly after the analysis is complete. Properly closing connections reflects professional scripting practices and helps maintain stability when working with shared database environments.
