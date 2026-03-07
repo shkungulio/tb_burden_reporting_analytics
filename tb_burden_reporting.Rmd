@@ -365,7 +365,7 @@ WHERE country_name IS NULL OR year IS NULL;
 Data quality checks confirm that all records contain values for the critical grain-defining attributes: country name and reporting year. The absence of missing values in these fields ensures that each record can be accurately linked to its respective dimensions in the reporting model.
 
 ## Dimension Tables
-### Country dimension
+### Country Dimension
 The country dimension creation chunk builds a lookup table that stores descriptive attributes related to each country in the dataset. Instead of repeating country names, ISO codes, and regional classifications within the fact table, these attributes are centralized in a dedicated dimension. This design reduces redundancy, simplifies reporting queries, and allows analysts to filter and group results by geography. The dimension also supports analytical use cases such as regional trend comparisons and country-level reporting.
 ```{sql dim_country}
 CREATE TABLE tb_reporting.dim_country (
@@ -380,7 +380,7 @@ CREATE TABLE tb_reporting.dim_country (
 ```
 A dedicated country dimension table is constructed to store geographic attributes such as country name, ISO codes, and world region. Separating descriptive information from measurable metrics reduces redundancy and allows the same country attributes to be reused across multiple analytical queries.
 
-### Date dimension
+### Date Dimension
 The date dimension creation chunk constructs a time dimension aligned with the dataset’s annual reporting structure. Although the dataset records only yearly observations, the dimension enriches the time context by including attributes such as the reporting year and decade grouping. This allows analysts to perform time-based aggregations and trend analysis more easily. Incorporating a date dimension reflects standard data warehouse design practices and prepares the dataset for dashboard visualizations and longitudinal analysis.
 ```{sql dim_date}
 CREATE TABLE tb_reporting.dim_date (
@@ -393,7 +393,7 @@ CREATE TABLE tb_reporting.dim_date (
 ```
 A time dimension table is introduced to support temporal analysis. Each row represents a reporting year and includes derived attributes such as the decade and formatted year labels. Even though the source dataset is annual, adding these derived attributes expands analytical flexibility for trend analysis and aggregated time comparisons.
 
-### Methodology dimension
+### Methodology Dimension
 The methodology dimension creation chunk extracts textual descriptors that explain how TB burden metrics were estimated. Rather than repeating these explanatory strings for every record in the fact table, the methodology descriptions are normalized into their own dimension. This approach improves efficiency and makes it possible to analyze results by methodological approach if needed. It also provides transparency for analysts and stakeholders who want to understand the estimation methods behind the reported indicators.
 ```{sql dim_methodology}
 CREATE TABLE tb_reporting.dim_methodology (
