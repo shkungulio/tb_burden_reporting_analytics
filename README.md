@@ -77,6 +77,7 @@ The analytical warehouse follows a star schema design, enabling
 efficient reporting queries and simplified joins.
 
 ## Star Schema Structure
+![ERD_Diagram](resources/diagram.png)
 
 dim_country ---- fact_tb_burden ---- dim_date\
                      \|\
