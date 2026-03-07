@@ -7,7 +7,7 @@ Modeling\
 
 ------------------------------------------------------------------------
 
-# Project Overview
+## Project Overview
 
 Modern public health analysis relies on the ability to convert complex
 datasets into structured reporting systems that support evidence-based
@@ -31,7 +31,7 @@ systems.
 
 ------------------------------------------------------------------------
 
-# Business & Analytical Value
+## Business & Analytical Value
 
 This project demonstrates how data engineering and reporting analytics
 techniques can transform raw public health data into decision-ready
@@ -51,20 +51,20 @@ interactive exploration of global health indicators.
 
 ------------------------------------------------------------------------
 
-# Dataset
+## Dataset
 
 **Source Dataset:** Global TB Burden Country Dataset
 
 The dataset contains country-level annual measurements including:
 
-  Metric Category   Examples
-  ----------------- --------------------------------------------------------
-  Population        Estimated total population
-  Prevalence        TB prevalence per 100k population
-  Incidence         Incident TB cases
-  Mortality         TB deaths (excluding HIV and HIV-positive cases)
-  HIV-TB            Incidence and mortality among HIV-positive populations
-  Detection         Case detection rate (%)
+  | Metric Category | Examples |
+  | ----------------| --------------------------------------------------------
+  | Population      | Estimated total population |
+  | Prevalence      | TB prevalence per 100k population |
+  | Incidence       | Incident TB cases |
+  | Mortality       | TB deaths (excluding HIV and HIV-positive cases) |
+  | HIV-TB          | Incidence and mortality among HIV-positive populations |
+  | Detection       | Case detection rate (%) |
 
 The dataset contains 47 variables per record and was validated prior to
 ingestion to ensure schema compatibility and data integrity.
