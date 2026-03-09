@@ -21,7 +21,7 @@ output:
       in_header: resources/header.tex
 header-includes:
   - \usepackage{xcolor}
-  - \definecolor{brand}{HTML}{000000}
+  - \definecolor{brand}{HTML}{FF4000}
   - \definecolor{subbrand}{HTML}{212121}
   - \usepackage{titlesec}
   - \titleformat{\section}{\Large\bfseries\color{brand}}{\thesection}{1em}{}
