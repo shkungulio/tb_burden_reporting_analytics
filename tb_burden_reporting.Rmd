@@ -21,8 +21,8 @@ output:
       in_header: resources/header.tex
 header-includes:
   - \usepackage{xcolor}
-  - \definecolor{brand}{HTML}{FF4000}
-  - \definecolor{subbrand}{HTML}{212121}
+  - \definecolor{brand}{HTML}{000080}
+  - \definecolor{subbrand}{HTML}{000000}
   - \usepackage{titlesec}
   - \titleformat{\section}{\Large\bfseries\color{brand}}{\thesection}{1em}{}
   - \titleformat{\subsection}{\large\bfseries\color{subbrand}}{\thesubsection}{0.75em}{}
